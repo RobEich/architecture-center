@@ -1,78 +1,83 @@
-Messaging oder Eventing Systeme sind weit verbreitet um z. B. asynchrone Kommunikation zwischen Mikroservices bzw. distributierten Systemen auf dem gleichen Nachrichten Kanal zu ermöglichen. Diese Systeme werden auch häufig benützt, um die Verarbeitung von Nachrichten auf leicht zu skalierende Worker Prozesse zu verteilen. 
+Messaging or eventing systems are widely used, for example, to enable asynchronous communication between microservices or distributed systems on the same message channel. These systems are also often used to distribute message processing across easy-to-scale worker processes.
 
-Eventing Systeme bauen hierbei häufig auf zwei unterschiedlichen Architekturen auf: 
+Eventing systems are often based on two different architectures:
 
 - [Competing Consumer](./competing-consumers.yml)
 - Partitioned Consumer
 
-Ein grundlegendes Verständniss dieser Architekturen und die Funktionalitäten die zur Verfügung gestellt werden ist hilfreich um ein System auszuwählen, welche die Anforderungen an die jeweiligen Applikationen unterstützt. 
+A basic understanding of these architectures and the functionalities that are provided is helpful in selecting a system that supports the requirements of the respective applications.
 
 ### Delivery Patterns
-Eventing Systemen liefern häufig eine sogenannte Delivery Guarantees welche Funktionaliät beschreibt die vom Eventing System zur Verfügung gestellt wird: 
 
-- ***At-Most-Once***: A message is delivered zero or one times. This means a message could get lost and there's no guarantee that all messages published to the messaging system will be forwarded to potential consumers. 
+Eventing systems often provide so-called delivery guarantees which describes functionality provided by the systems:
+
+- ***At-Most-Once***: A message is delivered zero or one times. This means a message could get lost and there's no guarantee that all messages published to the messaging system will be forwarded to potential consumers.
 - ***At-Least-Once***: A message can be potentially delivered multiple times. This means a message can't get lost but it can be duplicated.
-- ***Exactly-Once***: A message will be delivered one time. This means a message can't get lost and can't get duplicated. 
+- ***Exactly-Once***: A message will be delivered one time. This means a message can't get lost and can't get duplicated.
 
-At-Most-Once ist hierbei das günstigste mit der höchsten Performance und dem geringsten Aufwand zur Implementierung. Es muss z. B. nicht in einem Status gespeichert werden, ob das Event bereits geliefert wurde. Es kann eine einfache Fire-and-Forget Funktionalität implementiert werden. 
+At-Most-Once is the cheapest with the highest performance and the least effort for implementation. For example, it is not necessary to save a state whether the event has already been delivered or read. A simple fire-and-forget functionality can be implemented.
 
-At-Least-Once muss Retry-Mechanismen implementieren um z. B. bei transienten Fehlern wie einem DNS Hick-up oder Connectivity loss das Event noch einmal zu erhalten. Ein Acknowledgesystem bei der empfangenden Applikation muss ebenfalls implementiert werden.
+At-least-once must implement retry mechanisms to receive or resend the event again, e.g. in the event of transient errors such as DNS hick-up or connectivity loss. An acknowledge system at the receiving application must also be implemented.
 
-Exactly-Once wird sehr häufig von Applikationen vorausgesetzt ist aber am aufwendigsten zu implementieren und dadurch in der Skalierung beschränkt bzw. nur mit hohem Resourcenaufwand skalierbar. 
+Exactly-Once is very often required by applications but is the most complex to implement by eventing systems and thus often limited in scaling or scalable only with high resource expenditure.
 
-[Azure IoT Hub](https://learn.microsoft.com/en-us/azure/iot-fundamentals/) und [Azure Event Hubs](https://learn.microsoft.com/en-us/azure/event-hubs/event-hubs-about) basieren beide auf dem Prinzip der Partitioned Consumers. Beide Systeme implementieren [At-Least-Once](https://learn.microsoft.com/en-us/azure/event-hubs/event-hubs-event-processor-host) Delivery Guarantee mit hoher Skalierungsmöglichkeit und erwarten die Implementierung einer client seitigen Acknowledge Funktionalität. Diese Funktionalität wird im Zusammenhang mit IoT Hub und Event Hubs als Checkpointing bezeichnet. SDKs erleichtern hierbei die Implementierung des Checkpointings. 
-
+[Azure IoT Hub](https://learn.microsoft.com/en-us/azure/iot-fundamentals/) and [Azure Event Hubs](https://learn.microsoft.com/en-us/azure/event-hubs/event-hubs-about) are both based on the principle of partitioned consumers. Both systems implement [At-Least-Once](https://learn.microsoft.com/en-us/azure/event-hubs/event-hubs-event-processor-host) delivery guarantees with high scalability and reasonable costs. Both expect the implementation of client-side acknowledgement functionality. In the context of IoT Hub and Event Hubs this functionality is referred to as check pointing.  
 
 ## Partitioned Consumers
+
 ### Overview IoT Hub / Event Hubs
 
-Einzelne Events werden in IoT Hub und Event Hubs in sogenannten Partitionen gespeichert. Sobald neue Events eintreffen, werden diese am Ende der jeweiligen Partition gespeichert. Eine Partition kann somit als "commit log" betrachtet werden.
+Individual events are stored in IoT Hub and Event Hubs in so-called partitions. As soon as new events arrive, they are stored at the end of the respective partition. A partition can thus be considered a "commit log".
 
-![](./_images/partitioned-consumers-partitions.png)
+![Overview Partitions](./_images/partitioned-consumers-partitions.png)
 
-In IoT Hub / Event Hubs werden nicht einzelne Events nach Überschreiten der maximalen [Retention Time](https://learn.microsoft.com/en-us/azure/event-hubs/event-hubs-faq) aus dem "commit log" entfernt. Vielmehr werden größere Speicher Blöcke aus dem "commit log" entfernt. Dies erfolgt, wenn die Retention Time aller Events überschritten wurde ***und*** zusätzlich ein kompletter Speicherbereich innerhalb einer Partition gefüllt ist. Aus diesem Grund kann es zu Situationen kommen, in denen IoT Hub und Event Hubs Events liefern, deren Retention Time bereits überschritten wurde.
+In IoT Hub / Event Hubs, individual events are not removed from the "commit log" after exceeding the maximum [Retention Time](https://learn.microsoft.com/en-us/azure/event-hubs/event-hubs-faq). Rather, larger memory blocks are removed from the "commit log". This happens when the retention time of all events has been exceeded ***and*** an entire memory area within a partition is filled. For this reason, there can be situations where IoT Hub and Event Hubs deliver events whose retention time has already been exceeded.
 
-Innerhalb einer Partition speichert IoT Hub und Event Hubs zusätzlich zu den Event Daten Metadaten, wie z. B. den Stream Offset: 
-
+Within a partition, IoT Hub and Event Hubs store metadata, such as the stream offset, in addition to the event data:  
 ![](./_images/partitioned-consumers-metadataoffset.png)
-
 
 An offset is the position of an event within a partition. The offset is a byte numbering of the event and together with the Partition Id it uniquely identifies the event. Offset and Partition Id enables an event consumer or client application to specify a point in the event stream from which they want to begin reading events. The offset can be specified as a offset value or a timestamp using IoT Hub / Event Hubs.
 
 ### Processed Events
-Im Unterschied zu Event Systemen mit Competing Consumers verwaltet ein Eventing System mit Partitioned Consumer keine Informationenen welche Events bereits von Clients abgerufen und verarbeitet wurden. Es wird erwartet, dass diese Funktionalität vom Client zur Verfügung gestellt wird. 
+
+In contrast to event systems with competing consumers, an eventing system with partitioned consumer does not manage or store information about which events have already been retrieved and processed by clients. This functionality is expected to be provided by the client.
 
 #### Partitions & Partition Reader
-Bei der Implementierung dieser Funktionalität ist zu beachten, dass pro Partition nur ein Client, oder genauer ausgedrückt ein Partition Reader Events aus einer explizit zugeordneten Partition lesen kann. Im Gegenzug kann jeweils nur ein Partition Reader mit einer Partition verbunden sein und Events abrufen. Dies bedeuted auch, dass die Anzahl der Partitionen die Anzahl der maximal gleichzeitig lesenden Partition Reader, und damit auch die Performance der Verarbeitung bestimmt.
 
-Das nachfolgende Beispiel zeigt eine Instanz von Event Hubs / IoT Hub mit 4 Partitionen. Eine Applikation mit einem Partition Reader wird verwendet um Events zu lesen und zu Verarbeiten: 
-![](./_images/partitioned-consumers-reader01.png)
+The example below shows an instance of Event Hubs / IoT Hub with 4 partitions and an application with a partition reader which is used to read and process events:
 
-Um nun eine maximale parallelität beim Lesen der Events zu implementieren wird empfohlen pro Partition einen aktiven Partition Reader zu implementieren. D. h. in dem Beispiel werden 4 Instanzen der Applikation gestartet, die sich jeweils mit einer Partition verbinden um Events aus dieser Partition zu lesen. 
+![Partition Reader](./_images/partitioned-consumers-reader01.png)
 
-![](./_images/partitioned-consumers-reader02.png)
+In order to implement maximum parallelism when reading the events, it is recommended to implement only one active partition reader per partition. This means that in the example 4 instances of the application should be started, each of which connects to a partition to read events from this partition.  
 
+![Multiple Partition Reader](./_images/partitioned-consumers-reader02.png)
 
-Theoretisch können maximal 5 Partition Reader konkurierend auf eine einzelne Partition zugreifen. Dies ist nicht empfohlen, da jeder Partition Reader Zugriff auf alle Events in der jeweiligen Partition hat und demenstprechend eine mehrfache Verarbeitung der Events erfolgt bzw. ein Mechanismus zur Synchronisierung der Partition Reader implementiert werden muss. Dies führt häufig zu aufwendigen Custom Lösungen. 
+Theoretically, a maximum of 5 partition readers can simultaneously read from a single partition. This is not recommended because each partition reader has access to all events in the respective partition and therefore multiple processing of the events takes place or a mechanism for synchronizing the partition reader must be implemented. This often leads to complex custom solutions which should be avoided.
 
-Soll ein Event mehrfach verarbeitet werden z. B. um das Event in einem Long Term Storage zu archivieren und gleichzeit ein NRT Dashboard mit Informationen zu befüllen bietet sich die Verwendung von Consumer Groups an. 
+If there's a need to process an event several times, e.g. to archive the event in a long-term storage and at the same time process the event and update a NRT dashboard with information, the use of consumer groups is recommended.  
 
 #### Consumer Groups
-Die Kopplung eines Partition Readers mit einer Partition bedeuted nicht, dass ein Event nur einmal von einer Applikation gelesen werden kann. Consumer groups enable multiple consuming application to each have a separate view of the events in the partitions, and to read the stream independently at their own pace and with their own offsets. [Details](https://learn.microsoft.com/en-us/azure/event-hubs/event-hubs-features)
+
+Theoretically, a maximum of 5 partition readers can compete with a single partition. This is not recommended because each partition reader has access to all events in the respective partition and therefore a multiple processing of the events takes place or a mechanism for synchronizing the partition reader must be implemented. This often leads to complex custom solutions.  
+
+If an event is to be processed several times, e.g. to archive the event in a long-term storage and at the same time to fill an NRT dashboard with information, the use of consumer groups is recommended.  
+
+Details Consumer groups can be found [here](https://learn.microsoft.com/en-us/azure/event-hubs/event-hubs-features)
 
 
 #### Checkpointing
-Um Events von einer Partition zu lesen muss die jeweilige Applikation bzw. der Partition Reader sich mit einer Partition verbinden und dem Eventing System mitteilen ab welchem Offset Events gelesen werden sollen. Dies setzt voraus, dass ein Client Informationen darüber speichert, welches Event bereits verarbeitet wurde. Im weitesten Sinne kann diese Information mit einem "Client-Side-Cursor" verglichen werden. 
+In order to read events from a partition, the respective application or partition reader must connect to a partition and tell the eventing system from which offset events should be read. This requires the client to store information about which event has already been processed. In the broadest sense, this information can be compared to a "client-side cursor".  
 
-Dieser Prozess wird ***Checkpointing*** genannnt. Checkpointing is a process by which clients mark or commit their position within a partition event sequences. It is the responsibility of the client application to store the checkpointing information (partition id & offset of already processed events). Um die Checkpointing Informationen jetzt nicht nach einem evtl. Neustart zu verlieren, wird empfohlen dies mit Hilfe eines externen Service zu speichern. 
-![](./_images/partitioned-consumers-checkpointing.png)
+This process is called **checkpointing***. Checkpointing is a process by which clients mark or commit their position within a partition event sequences. It is the responsibility of the client application to store the checkpointing information (partition id & offset of already processed events). In order not to lose the checkpointing information after a possible restart, it is recommended to save this with the help of an external service.  
 
-Für Checkpointing bieten sich verschiedene Dienste wie z. B. [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/), [Azure Cosmos DB](https://learn.microsoft.com/en-us/azure/cosmos-db/introduction), [Azure Cache for Redis](https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/cache-overview) etc. an. 
+![Check Pointing](./_images/partitioned-consumers-checkpointing.png) 
 
-Bei der Auswahl des Service zum Persistieren der Checkpoint Informationen müssen Anforderungen an Skalierbarkeit und Reliability abgewogen werden. Best Practice ist, nicht jedes einzelne gelesene Event zu checkpointen sondern Event Batches zu checkpointen. Dies erfolgt um den gewählten Service nicht zu überlasten bzw. um kein Bottle-Neck in der Eventverarbeitung zu kreieren.
+For checkpointing, various services such as [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/), [Azure Cosmos DB](https://learn.microsoft.com/en-us/azure/cosmos-db/introduction), [Azure Cache for Redis](https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/cache-overview), etc. are available.  
+
+When selecting the service to persist the checkpoint information, scalability and reliability requirements must be weighed. Best practice is not to checkpoint every single event processed, but to checkpoint event batches. This is done in order not to overload the selected service or to avoid creating a bottle-neck in event processing.
 
 ## SDK Unterstützung
-Microsoft stellt [SDKs](https://learn.microsoft.com/en-us/azure/event-hubs/sdks) für viele Sprachen zur Verfügung. Diese Vereinfachen den Prozess des Checkpointing. Zusätzlich bieten die SDKs Funktionalität die Zuordnung von Partition Readers zu Partitionen mit Anzahl der lesenden Instanzen anzupassen.
+Microsoft provides [SDKs](https://learn.microsoft.com/en-us/azure/event-hubs/sdks) for many languages. These simplify the checkpointing process. In addition, the SDKs provide functionality to customize the mapping of partition readers to partitions with the number of instances which are spun up to read from partitions.
 
 ## Next steps
 
